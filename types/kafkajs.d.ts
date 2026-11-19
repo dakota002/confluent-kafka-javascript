@@ -15,7 +15,12 @@ import {
   AclOperationTypes,
   Uuid,
   IsolationLevel,
-  ConsumerGroupTypes
+  ConsumerGroupTypes,
+  AclResourceTypes,
+  AclResourcePatternTypes,
+  AclPermissionTypes,
+  AclBinding,
+  AclBindingFilter
 } from './rdkafka'
 
 import {
@@ -35,7 +40,12 @@ export {
   AclOperationTypes,
   Uuid,
   IsolationLevel,
-  ConsumerGroupTypes
+  ConsumerGroupTypes,
+  AclResourceTypes,
+  AclResourcePatternTypes,
+  AclPermissionTypes,
+  AclBinding,
+  AclBindingFilter
 } from './rdkafka'
 
 export interface OauthbearerProviderResponse {
@@ -547,6 +557,45 @@ export interface ITopicConfig {
   configEntries?: IResourceConfigEntry[]
 }
 
+export type AclEntry = {
+  principal: string
+  host: string
+  operation: AclOperationTypes
+  permissionType: AclPermissionTypes
+}
+
+export type DescribeAclResource = {
+  resourceType: AclResourceTypes
+  resourceName: string
+  resourcePatternType: AclResourcePatternTypes
+  acls: AclEntry[]
+}
+
+export type DescribeAclResponse = {
+  /** Always 0; librdkafka does not expose throttle time. */
+  throttleTime: number
+  errorCode: number
+  errorMessage?: string | null
+  resources: DescribeAclResource[]
+}
+
+export type MatchingAcl = AclBinding & {
+  errorCode: number
+  errorMessage?: string | null
+}
+
+export type DeleteAclFilterResponse = {
+  errorCode: number
+  errorMessage?: string | null
+  matchingAcls: MatchingAcl[]
+}
+
+export type DeleteAclResponse = {
+  /** Always 0; librdkafka does not expose throttle time. */
+  throttleTime: number
+  filterResponses: DeleteAclFilterResponse[]
+}
+
 export type Admin = {
   connect(): Promise<void>
   disconnect(): Promise<void>
@@ -593,6 +642,9 @@ export type Admin = {
       timeout?: number,
       isolationLevel: IsolationLevel
     }): Promise<Array<SeekEntry>>
+  createAcls(options: { acl: AclBinding[], timeout?: number }): Promise<boolean>
+  describeAcls(options: AclBindingFilter & { timeout?: number }): Promise<DescribeAclResponse>
+  deleteAcls(options: { filters: AclBindingFilter[], timeout?: number }): Promise<DeleteAclResponse>
 }
 
 

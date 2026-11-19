@@ -699,6 +699,68 @@ class AdminClientListOffsets : public ErrorAwareWorker {
   rd_kafka_event_t *m_event_response = NULL;
 };
 
+/**
+ * @brief Create ACLs on a remote broker cluster.
+ */
+class AdminClientCreateAcls : public ErrorAwareWorker {
+ public:
+  AdminClientCreateAcls(Nan::Callback *, NodeKafka::AdminClient *,
+                        rd_kafka_AclBinding_t **, size_t, const int &);
+  ~AdminClientCreateAcls();
+
+  void Execute();
+  void HandleOKCallback();
+  void HandleErrorCallback();
+
+ private:
+  NodeKafka::AdminClient *m_client;
+  rd_kafka_AclBinding_t **m_acls;
+  size_t m_acl_cnt;
+  const int m_timeout_ms;
+  rd_kafka_event_t *m_event_response = NULL;
+};
+
+/**
+ * @brief Describe ACLs on a remote broker cluster.
+ */
+class AdminClientDescribeAcls : public ErrorAwareWorker {
+ public:
+  AdminClientDescribeAcls(Nan::Callback *, NodeKafka::AdminClient *,
+                          rd_kafka_AclBindingFilter_t *, const int &);
+  ~AdminClientDescribeAcls();
+
+  void Execute();
+  void HandleOKCallback();
+  void HandleErrorCallback();
+
+ private:
+  NodeKafka::AdminClient *m_client;
+  rd_kafka_AclBindingFilter_t *m_filter;
+  const int m_timeout_ms;
+  rd_kafka_event_t *m_event_response = NULL;
+};
+
+/**
+ * @brief Delete ACLs on a remote broker cluster.
+ */
+class AdminClientDeleteAcls : public ErrorAwareWorker {
+ public:
+  AdminClientDeleteAcls(Nan::Callback *, NodeKafka::AdminClient *,
+                        rd_kafka_AclBindingFilter_t **, size_t, const int &);
+  ~AdminClientDeleteAcls();
+
+  void Execute();
+  void HandleOKCallback();
+  void HandleErrorCallback();
+
+ private:
+  NodeKafka::AdminClient *m_client;
+  rd_kafka_AclBindingFilter_t **m_filters;
+  size_t m_filter_cnt;
+  const int m_timeout_ms;
+  rd_kafka_event_t *m_event_response = NULL;
+};
+
 }  // namespace Workers
 
 }  // namespace NodeKafka

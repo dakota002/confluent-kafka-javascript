@@ -151,6 +151,21 @@ v8::Local<v8::Array> FromDescribeTopicsResult(
 // ListOffsets: Response
 v8::Local<v8::Array> FromListOffsetsResult(
     const rd_kafka_ListOffsets_result_t* result);
+
+// ACLs: request
+rd_kafka_AclBinding_t *FromV8AclBinding(v8::Local<v8::Object>,
+                                        std::string &errstr);
+rd_kafka_AclBindingFilter_t *FromV8AclBindingFilter(v8::Local<v8::Object>,
+                                                    std::string &errstr);
+// ACLs: response
+v8::Local<v8::Object> FromAclBinding(const rd_kafka_AclBinding_t *);
+v8::Local<v8::Array> FromCreateAclsResult(
+    const rd_kafka_CreateAcls_result_t *result);
+v8::Local<v8::Array> FromDescribeAclsResult(
+    const rd_kafka_DescribeAcls_result_t *result);
+v8::Local<v8::Array> FromDeleteAclsResult(
+    const rd_kafka_DeleteAcls_result_t *result);
+
 }  // namespace Admin
 
 namespace TopicPartition {

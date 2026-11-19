@@ -1100,7 +1100,7 @@ void KafkaConsumerCommitted::HandleErrorCallback() {
 
 /**
  * @brief KafkaConsumer commit offsets with a callback function.
- * 
+ *
  * The first callback argument is the commit error, or null on success.
  *
  * @see RdKafka::KafkaConsumer::commitSync
@@ -1649,7 +1649,7 @@ void AdminClientDeleteRecords::HandleErrorCallback() {
 
 /**
  * @brief Describe Topics in an asynchronous worker
- * 
+ *
  * This callback will describe topics.
  */
 AdminClientDescribeTopics::AdminClientDescribeTopics(
@@ -1704,7 +1704,7 @@ void AdminClientDescribeTopics::HandleErrorCallback() {
 
 /**
  * @brief ListOffsets in an asynchronous worker
- * 
+ *
  * This callback will list requested offsets for the specified topic partitions.
  */
 AdminClientListOffsets::AdminClientListOffsets(
@@ -1748,6 +1748,162 @@ void AdminClientListOffsets::HandleOKCallback() {
 }
 
 void AdminClientListOffsets::HandleErrorCallback() {
+  Nan::HandleScope scope;
+
+  const unsigned int argc = 1;
+  v8::Local<v8::Value> argv[argc] = {GetErrorObject()};
+
+  callback->Call(argc, argv);
+}
+
+/**
+ * @brief CreateAcls in an asynchronous worker.
+ */
+AdminClientCreateAcls::AdminClientCreateAcls(Nan::Callback *callback,
+                                             AdminClient *client,
+                                             rd_kafka_AclBinding_t **acls,
+                                             size_t acl_cnt,
+                                             const int &timeout_ms)
+    : ErrorAwareWorker(callback),
+      m_client(client),
+      m_acls(acls),
+      m_acl_cnt(acl_cnt),
+      m_timeout_ms(timeout_ms) {}
+
+AdminClientCreateAcls::~AdminClientCreateAcls() {
+  if (m_acls) {
+    rd_kafka_AclBinding_destroy_array(m_acls, m_acl_cnt);
+    free(m_acls);
+  }
+
+  if (this->m_event_response) {
+    rd_kafka_event_destroy(this->m_event_response);
+  }
+}
+
+void AdminClientCreateAcls::Execute() {
+  Baton b = m_client->CreateAcls(m_acls, m_acl_cnt, m_timeout_ms,
+                                 &m_event_response);
+  if (b.err() != RdKafka::ERR_NO_ERROR) {
+    SetErrorBaton(b);
+  }
+}
+
+void AdminClientCreateAcls::HandleOKCallback() {
+  Nan::HandleScope scope;
+  const unsigned int argc = 2;
+  v8::Local<v8::Value> argv[argc];
+
+  argv[0] = Nan::Null();
+  argv[1] = Conversion::Admin::FromCreateAclsResult(
+      rd_kafka_event_CreateAcls_result(m_event_response));
+
+  callback->Call(argc, argv);
+}
+
+void AdminClientCreateAcls::HandleErrorCallback() {
+  Nan::HandleScope scope;
+
+  const unsigned int argc = 1;
+  v8::Local<v8::Value> argv[argc] = {GetErrorObject()};
+
+  callback->Call(argc, argv);
+}
+
+/**
+ * @brief DescribeAcls in an asynchronous worker.
+ */
+AdminClientDescribeAcls::AdminClientDescribeAcls(
+    Nan::Callback *callback, AdminClient *client,
+    rd_kafka_AclBindingFilter_t *filter, const int &timeout_ms)
+    : ErrorAwareWorker(callback),
+      m_client(client),
+      m_filter(filter),
+      m_timeout_ms(timeout_ms) {}
+
+AdminClientDescribeAcls::~AdminClientDescribeAcls() {
+  if (m_filter) {
+    rd_kafka_AclBinding_destroy(m_filter);
+  }
+
+  if (this->m_event_response) {
+    rd_kafka_event_destroy(this->m_event_response);
+  }
+}
+
+void AdminClientDescribeAcls::Execute() {
+  Baton b = m_client->DescribeAcls(m_filter, m_timeout_ms, &m_event_response);
+  if (b.err() != RdKafka::ERR_NO_ERROR) {
+    SetErrorBaton(b);
+  }
+}
+
+void AdminClientDescribeAcls::HandleOKCallback() {
+  Nan::HandleScope scope;
+  const unsigned int argc = 2;
+  v8::Local<v8::Value> argv[argc];
+
+  argv[0] = Nan::Null();
+  argv[1] = Conversion::Admin::FromDescribeAclsResult(
+      rd_kafka_event_DescribeAcls_result(m_event_response));
+
+  callback->Call(argc, argv);
+}
+
+void AdminClientDescribeAcls::HandleErrorCallback() {
+  Nan::HandleScope scope;
+
+  const unsigned int argc = 1;
+  v8::Local<v8::Value> argv[argc] = {GetErrorObject()};
+
+  callback->Call(argc, argv);
+}
+
+/**
+ * @brief DeleteAcls in an asynchronous worker.
+ */
+AdminClientDeleteAcls::AdminClientDeleteAcls(
+    Nan::Callback *callback, AdminClient *client,
+    rd_kafka_AclBindingFilter_t **filters, size_t filter_cnt,
+    const int &timeout_ms)
+    : ErrorAwareWorker(callback),
+      m_client(client),
+      m_filters(filters),
+      m_filter_cnt(filter_cnt),
+      m_timeout_ms(timeout_ms) {}
+
+AdminClientDeleteAcls::~AdminClientDeleteAcls() {
+  if (m_filters) {
+    rd_kafka_AclBinding_destroy_array(m_filters, m_filter_cnt);
+    free(m_filters);
+  }
+
+  if (this->m_event_response) {
+    rd_kafka_event_destroy(this->m_event_response);
+  }
+}
+
+void AdminClientDeleteAcls::Execute() {
+  Baton b = m_client->DeleteAcls(m_filters, m_filter_cnt, m_timeout_ms,
+                                 &m_event_response);
+  if (b.err() != RdKafka::ERR_NO_ERROR) {
+    SetErrorBaton(b);
+  }
+}
+
+void AdminClientDeleteAcls::HandleOKCallback() {
+  Nan::HandleScope scope;
+  const unsigned int argc = 2;
+  v8::Local<v8::Value> argv[argc];
+
+  argv[0] = Nan::Null();
+  argv[1] = Conversion::Admin::FromDeleteAclsResult(
+      rd_kafka_event_DeleteAcls_result(m_event_response));
+
+  callback->Call(argc, argv);
+}
+
+void AdminClientDeleteAcls::HandleErrorCallback() {
   Nan::HandleScope scope;
 
   const unsigned int argc = 1;

@@ -524,7 +524,7 @@ rd_kafka_topic_partition_list_t* TopicPartitionv8ArrayToTopicPartitionList(
 /**
  * @brief v8 Array of Topic Partitions with offsetspec to
  *        rd_kafka_topic_partition_list_t
- * 
+ *
  * @note Converts a v8 array of type [{topic: string, partition: number,
  *      offset: {timestamp: number}}] to a rd_kafka_topic_partition_list_t
  */
@@ -1276,7 +1276,7 @@ v8::Local<v8::Array> FromDeleteGroupsResult(
 }
 
 /**
- * @brief Converts a rd_kafka_ListConsumerGroupOffsets_result_t* 
+ * @brief Converts a rd_kafka_ListConsumerGroupOffsets_result_t*
  *        into a v8 Array.
  */
 v8::Local<v8::Array> FromListConsumerGroupOffsetsResult(
@@ -1612,6 +1612,234 @@ v8::Local<v8::Array> FromListOffsetsResult(
   }
 
   return resultArray;
+}
+
+namespace {
+
+/**
+ * Reads an optional string field. Returns false if the field is missing,
+ * null or undefined. The caller turns that into NULL, which librdkafka
+ * treats as "match any" for filters and rejects for bindings.
+ */
+bool GetOptionalString(v8::Local<v8::Object> object, const char *field_name,
+                       std::string *out) {
+  v8::Local<v8::String> field = Nan::New(field_name).ToLocalChecked();
+  if (!Nan::Has(object, field).FromMaybe(false)) {
+    return false;
+  }
+  v8::Local<v8::Value> v;
+  if (!Nan::Get(object, field).ToLocal(&v) || v->IsUndefined() ||
+      v->IsNull()) {
+    return false;
+  }
+  Nan::Utf8String str(v);
+  *out = std::string(*str ? *str : "");
+  return true;
+}
+
+void SetStringOrNull(v8::Local<v8::Object> obj, const char *key,
+                     const char *value) {
+  if (value) {
+    Nan::Set(obj, Nan::New(key).ToLocalChecked(),
+             Nan::New<v8::String>(value).ToLocalChecked());
+  } else {
+    Nan::Set(obj, Nan::New(key).ToLocalChecked(), Nan::Null());
+  }
+}
+
+/**
+ * Same error convention as FromDeleteGroupsResult:
+ * errorCode is always set; error is set only on failure.
+ */
+void SetAclError(v8::Local<v8::Object> obj, const rd_kafka_error_t *error) {
+  if (!error) {
+    Nan::Set(obj, Nan::New("errorCode").ToLocalChecked(),
+             Nan::New<v8::Number>(RD_KAFKA_RESP_ERR_NO_ERROR));
+    return;
+  }
+  RdKafka::ErrorCode code =
+      static_cast<RdKafka::ErrorCode>(rd_kafka_error_code(error));
+  const char *msg = rd_kafka_error_string(error);
+  Nan::Set(obj, Nan::New("errorCode").ToLocalChecked(),
+           Nan::New<v8::Number>(code));
+  Nan::Set(obj, Nan::New("error").ToLocalChecked(),
+           RdKafkaError(code, msg ? msg : ""));
+}
+
+/**
+ * Shared by bindings (createAcls) and filters (describeAcls/deleteAcls).
+ *
+ * Expected JS shape (same field names as KafkaJS):
+ * {
+ *   resourceType: number, resourceName?: string,
+ *   resourcePatternType: number, principal?: string, host?: string,
+ *   operation: number, permissionType: number
+ * }
+ *
+ * Missing enum fields default to UNKNOWN (0), which librdkafka rejects with
+ * a clear error rather than silently matching everything.
+ */
+rd_kafka_AclBinding_t *FromV8AclCommon(v8::Local<v8::Object> object,
+                                       bool is_filter, std::string &errstr) {
+  std::string name, principal, host;
+  const bool has_name = GetOptionalString(object, "resourceName", &name);
+  const bool has_principal = GetOptionalString(object, "principal", &principal);
+  const bool has_host = GetOptionalString(object, "host", &host);
+
+  const int64_t restype = GetParameter<int64_t>(
+      object, "resourceType", RD_KAFKA_RESOURCE_UNKNOWN);
+  const int64_t pattern_type = GetParameter<int64_t>(
+      object, "resourcePatternType", RD_KAFKA_RESOURCE_PATTERN_UNKNOWN);
+  const int64_t operation = GetParameter<int64_t>(
+      object, "operation", RD_KAFKA_ACL_OPERATION_UNKNOWN);
+  const int64_t permission_type = GetParameter<int64_t>(
+      object, "permissionType", RD_KAFKA_ACL_PERMISSION_TYPE_UNKNOWN);
+
+  char errbuf[512] = {0};
+  rd_kafka_AclBinding_t *acl;
+
+  if (is_filter) {
+    acl = rd_kafka_AclBindingFilter_new(
+        static_cast<rd_kafka_ResourceType_t>(restype),
+        has_name ? name.c_str() : NULL,
+        static_cast<rd_kafka_ResourcePatternType_t>(pattern_type),
+        has_principal ? principal.c_str() : NULL,
+        has_host ? host.c_str() : NULL,
+        static_cast<rd_kafka_AclOperation_t>(operation),
+        static_cast<rd_kafka_AclPermissionType_t>(permission_type),
+        errbuf, sizeof(errbuf));
+  } else {
+    // librdkafka validates that name/principal/host are non-NULL and that
+    // the enums are concrete (not UNKNOWN/ANY/MATCH).
+    acl = rd_kafka_AclBinding_new(
+        static_cast<rd_kafka_ResourceType_t>(restype),
+        has_name ? name.c_str() : NULL,
+        static_cast<rd_kafka_ResourcePatternType_t>(pattern_type),
+        has_principal ? principal.c_str() : NULL,
+        has_host ? host.c_str() : NULL,
+        static_cast<rd_kafka_AclOperation_t>(operation),
+        static_cast<rd_kafka_AclPermissionType_t>(permission_type),
+        errbuf, sizeof(errbuf));
+  }
+
+  if (acl == NULL) {
+    errstr = errbuf[0] ? std::string(errbuf) : "Invalid ACL binding";
+  }
+  return acl;
+}
+
+}  // namespace
+
+rd_kafka_AclBinding_t *FromV8AclBinding(v8::Local<v8::Object> object,
+                                        std::string &errstr) {
+  return FromV8AclCommon(object, false, errstr);
+}
+
+rd_kafka_AclBindingFilter_t *FromV8AclBindingFilter(
+    v8::Local<v8::Object> object, std::string &errstr) {
+  return FromV8AclCommon(object, true, errstr);
+}
+
+/**
+ * @brief Converts a rd_kafka_AclBinding_t* into a v8 object.
+ *
+ * { resourceType, resourceName, resourcePatternType, principal, host,
+ *   operation, permissionType, errorCode, error? }
+ */
+v8::Local<v8::Object> FromAclBinding(const rd_kafka_AclBinding_t *acl) {
+  v8::Local<v8::Object> obj = Nan::New<v8::Object>();
+
+  Nan::Set(obj, Nan::New("resourceType").ToLocalChecked(),
+           Nan::New<v8::Number>(rd_kafka_AclBinding_restype(acl)));
+  SetStringOrNull(obj, "resourceName", rd_kafka_AclBinding_name(acl));
+  Nan::Set(obj, Nan::New("resourcePatternType").ToLocalChecked(),
+           Nan::New<v8::Number>(
+               rd_kafka_AclBinding_resource_pattern_type(acl)));
+  SetStringOrNull(obj, "principal", rd_kafka_AclBinding_principal(acl));
+  SetStringOrNull(obj, "host", rd_kafka_AclBinding_host(acl));
+  Nan::Set(obj, Nan::New("operation").ToLocalChecked(),
+           Nan::New<v8::Number>(rd_kafka_AclBinding_operation(acl)));
+  Nan::Set(obj, Nan::New("permissionType").ToLocalChecked(),
+           Nan::New<v8::Number>(rd_kafka_AclBinding_permission_type(acl)));
+  SetAclError(obj, rd_kafka_AclBinding_error(acl));
+
+  return obj;
+}
+
+/**
+ * @brief Converts a rd_kafka_CreateAcls_result_t* into a v8 array.
+ *
+ * One entry per requested binding, in request order:
+ * [{ errorCode: number, error?: LibrdKafkaError }]
+ */
+v8::Local<v8::Array> FromCreateAclsResult(
+    const rd_kafka_CreateAcls_result_t *result) {
+  v8::Local<v8::Array> returnArray = Nan::New<v8::Array>();
+  size_t result_cnt;
+  const rd_kafka_acl_result_t **results =
+      rd_kafka_CreateAcls_result_acls(result, &result_cnt);
+
+  for (size_t i = 0; i < result_cnt; i++) {
+    v8::Local<v8::Object> acl_result = Nan::New<v8::Object>();
+    SetAclError(acl_result, rd_kafka_acl_result_error(results[i]));
+    Nan::Set(returnArray, i, acl_result);
+  }
+
+  return returnArray;
+}
+
+/**
+ * @brief Converts a rd_kafka_DescribeAcls_result_t* into a v8 array of
+ * AclBinding objects (see FromAclBinding).
+ */
+v8::Local<v8::Array> FromDescribeAclsResult(
+    const rd_kafka_DescribeAcls_result_t *result) {
+  v8::Local<v8::Array> returnArray = Nan::New<v8::Array>();
+  size_t acl_cnt;
+  const rd_kafka_AclBinding_t **acls =
+      rd_kafka_DescribeAcls_result_acls(result, &acl_cnt);
+
+  for (size_t i = 0; i < acl_cnt; i++) {
+    Nan::Set(returnArray, i, FromAclBinding(acls[i]));
+  }
+
+  return returnArray;
+}
+
+/**
+ * @brief Converts a rd_kafka_DeleteAcls_result_t* into a v8 array.
+ *
+ * One entry per filter, in request order:
+ * [{ errorCode: number, error?: LibrdKafkaError,
+ *    matchingAcls: AclBinding[] }]
+ */
+v8::Local<v8::Array> FromDeleteAclsResult(
+    const rd_kafka_DeleteAcls_result_t *result) {
+  v8::Local<v8::Array> returnArray = Nan::New<v8::Array>();
+  size_t response_cnt;
+  const rd_kafka_DeleteAcls_result_response_t **responses =
+      rd_kafka_DeleteAcls_result_responses(result, &response_cnt);
+
+  for (size_t i = 0; i < response_cnt; i++) {
+    v8::Local<v8::Object> response_object = Nan::New<v8::Object>();
+    SetAclError(response_object,
+                rd_kafka_DeleteAcls_result_response_error(responses[i]));
+
+    size_t matching_cnt;
+    const rd_kafka_AclBinding_t **matching =
+        rd_kafka_DeleteAcls_result_response_matching_acls(responses[i],
+                                                          &matching_cnt);
+    v8::Local<v8::Array> matchingArray = Nan::New<v8::Array>();
+    for (size_t j = 0; j < matching_cnt; j++) {
+      Nan::Set(matchingArray, j, FromAclBinding(matching[j]));
+    }
+    Nan::Set(response_object, Nan::New("matchingAcls").ToLocalChecked(),
+             matchingArray);
+
+    Nan::Set(returnArray, i, response_object);
+  }
+
+  return returnArray;
 }
 
 }  // namespace Admin

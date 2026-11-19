@@ -387,6 +387,72 @@ export enum AclOperationTypes {
     IDEMPOTENT_WRITE = 12,
 }
 
+export enum AclResourceTypes {
+    UNKNOWN = 0,
+    ANY = 1,
+    TOPIC = 2,
+    GROUP = 3,
+    BROKER = 4,
+    /** Alias of BROKER, matching KafkaJS naming. */
+    CLUSTER = 4,
+    TRANSACTIONAL_ID = 5,
+}
+
+export enum AclResourcePatternTypes {
+    UNKNOWN = 0,
+    ANY = 1,
+    MATCH = 2,
+    LITERAL = 3,
+    PREFIXED = 4,
+}
+
+export enum AclPermissionTypes {
+    UNKNOWN = 0,
+    ANY = 1,
+    DENY = 2,
+    ALLOW = 3,
+}
+
+export type AclBinding = {
+    resourceType: AclResourceTypes
+    resourceName: string
+    resourcePatternType: AclResourcePatternTypes
+    principal: string
+    host: string
+    operation: AclOperationTypes
+    permissionType: AclPermissionTypes
+}
+
+/**
+ * Filter for describeAcls/deleteAcls. null/undefined string fields match
+ * any value. Use the ANY enum values to match all.
+ */
+export type AclBindingFilter = {
+    resourceType: AclResourceTypes
+    resourceName?: string | null
+    resourcePatternType: AclResourcePatternTypes
+    principal?: string | null
+    host?: string | null
+    operation: AclOperationTypes
+    permissionType: AclPermissionTypes
+}
+
+export type AclBindingResult = AclBinding & {
+    errorCode: number
+    error?: LibrdKafkaError
+}
+
+export type CreateAclsResult = {
+    errorCode: number
+    error?: LibrdKafkaError
+}
+
+export type DeleteAclsResult = {
+    errorCode: number
+    error?: LibrdKafkaError
+    matchingAcls: AclBindingResult[]
+}
+
 export type MemberAssignment = {
     topicPartitions: TopicPartition[]
 }
@@ -551,6 +617,24 @@ export interface IAdminClient {
     listOffsets(partitions: TopicPartitionOffsetSpec[],
         options?: { timeout?: number, isolationLevel?: IsolationLevel },
         cb?: (err: LibrdKafkaError, result: ListOffsetsResult[]) => any): void;
+
+    createAcls(acls: AclBinding[],
+        cb?: (err: LibrdKafkaError, result: CreateAclsResult[]) => any): void;
+    createAcls(acls: AclBinding[],
+        options?: { timeout?: number },
+        cb?: (err: LibrdKafkaError, result: CreateAclsResult[]) => any): void;
+
+    describeAcls(filter: AclBindingFilter,
+        cb?: (err: LibrdKafkaError, result: AclBindingResult[]) => any): void;
+    describeAcls(filter: AclBindingFilter,
+        options?: { timeout?: number },
+        cb?: (err: LibrdKafkaError, result: AclBindingResult[]) => any): void;
+
+    deleteAcls(filters: AclBindingFilter[],
+        cb?: (err: LibrdKafkaError, result: DeleteAclsResult[]) => any): void;
+    deleteAcls(filters: AclBindingFilter[],
+        options?: { timeout?: number },
+        cb?: (err: LibrdKafkaError, result: DeleteAclsResult[]) => any): void;
 
     disconnect(): void;
 }

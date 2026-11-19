@@ -132,6 +132,11 @@ void AdminClient::Init(v8::Local<v8::Object> exports) {
   Nan::SetPrototypeMethod(tpl, "listConsumerGroupOffsets",
                           NodeListConsumerGroupOffsets);
 
+  // ACL related operations
+  Nan::SetPrototypeMethod(tpl, "createAcls", NodeCreateAcls);
+  Nan::SetPrototypeMethod(tpl, "describeAcls", NodeDescribeAcls);
+  Nan::SetPrototypeMethod(tpl, "deleteAcls", NodeDeleteAcls);
+
   Nan::SetPrototypeMethod(tpl, "connect", NodeConnect);
   Nan::SetPrototypeMethod(tpl, "disconnect", NodeDisconnect);
   Nan::SetPrototypeMethod(tpl, "setSaslCredentials", NodeSetSaslCredentials);
@@ -984,6 +989,159 @@ Baton AdminClient::ListOffsets(rd_kafka_topic_partition_list_t *partitions,
   }
 }
 
+/**
+ * Shared result handling for the ACL operations. Ownership of
+ * *event_response stays with the caller (the worker), which destroys it.
+ */
+static Baton BatonFromAdminEvent(rd_kafka_event_t *event_response,
+                                 rd_kafka_event_type_t expected_type) {
+  // If we got no response from that operation, this is a failure
+  // likely due to time out.
+  if (event_response == NULL) {
+    return Baton(RdKafka::ERR__TIMED_OUT);
+  }
+
+  // PollForEvent can give up while holding an event of a different type.
+  // Treat that as a timeout so the worker never casts it to the wrong
+  // result type.
+  if (rd_kafka_event_type(event_response) != expected_type) {
+    return Baton(RdKafka::ERR__TIMED_OUT);
+  }
+
+  const rd_kafka_resp_err_t errcode = rd_kafka_event_error(event_response);
+  if (errcode != RD_KAFKA_RESP_ERR_NO_ERROR) {
+    const char *errmsg = rd_kafka_event_error_string(event_response);
+    if (errmsg) {
+      return Baton(static_cast<RdKafka::ErrorCode>(errcode),
+                   std::string(errmsg));
+    }
+    return Baton(static_cast<RdKafka::ErrorCode>(errcode));
+  }
+
+  // event_response contains the result, which is converted by the caller.
+  return Baton(RdKafka::ERR_NO_ERROR);
+}
+
+Baton AdminClient::CreateAcls(rd_kafka_AclBinding_t **acls, size_t acl_cnt,
+                              int timeout_ms,
+                              /* out */ rd_kafka_event_t **event_response) {
+  if (!IsConnected()) {
+    return Baton(RdKafka::ERR__STATE);
+  }
+
+  {
+    scoped_shared_write_lock lock(m_connection_lock);
+    if (!IsConnected()) {
+      return Baton(RdKafka::ERR__STATE);
+    }
+
+    rd_kafka_AdminOptions_t *options = rd_kafka_AdminOptions_new(
+        m_client->c_ptr(), RD_KAFKA_ADMIN_OP_CREATEACLS);
+
+    char errstr[512];
+    rd_kafka_resp_err_t err = rd_kafka_AdminOptions_set_request_timeout(
+        options, timeout_ms, errstr, sizeof(errstr));
+    if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+      rd_kafka_AdminOptions_destroy(options);
+      return Baton(static_cast<RdKafka::ErrorCode>(err), errstr);
+    }
+
+    rd_kafka_queue_t *rkqu = rd_kafka_queue_new(m_client->c_ptr());
+
+    rd_kafka_CreateAcls(m_client->c_ptr(), acls, acl_cnt, options, rkqu);
+
+    // DON'T destroy the event. It is the out parameter, and ownership is
+    // the caller's.
+    *event_response =
+        PollForEvent(rkqu, RD_KAFKA_EVENT_CREATEACLS_RESULT, timeout_ms);
+
+    rd_kafka_queue_destroy(rkqu);
+    rd_kafka_AdminOptions_destroy(options);
+
+    return BatonFromAdminEvent(*event_response,
+                               RD_KAFKA_EVENT_CREATEACLS_RESULT);
+  }
+}
+
+Baton AdminClient::DescribeAcls(rd_kafka_AclBindingFilter_t *filter,
+                                int timeout_ms,
+                                /* out */ rd_kafka_event_t **event_response) {
+  if (!IsConnected()) {
+    return Baton(RdKafka::ERR__STATE);
+  }
+
+  {
+    scoped_shared_write_lock lock(m_connection_lock);
+    if (!IsConnected()) {
+      return Baton(RdKafka::ERR__STATE);
+    }
+
+    rd_kafka_AdminOptions_t *options = rd_kafka_AdminOptions_new(
+        m_client->c_ptr(), RD_KAFKA_ADMIN_OP_DESCRIBEACLS);
+
+    char errstr[512];
+    rd_kafka_resp_err_t err = rd_kafka_AdminOptions_set_request_timeout(
+        options, timeout_ms, errstr, sizeof(errstr));
+    if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+      rd_kafka_AdminOptions_destroy(options);
+      return Baton(static_cast<RdKafka::ErrorCode>(err), errstr);
+    }
+
+    rd_kafka_queue_t *rkqu = rd_kafka_queue_new(m_client->c_ptr());
+
+    rd_kafka_DescribeAcls(m_client->c_ptr(), filter, options, rkqu);
+
+    *event_response =
+        PollForEvent(rkqu, RD_KAFKA_EVENT_DESCRIBEACLS_RESULT, timeout_ms);
+
+    rd_kafka_queue_destroy(rkqu);
+    rd_kafka_AdminOptions_destroy(options);
+
+    return BatonFromAdminEvent(*event_response,
+                               RD_KAFKA_EVENT_DESCRIBEACLS_RESULT);
+  }
+}
+
+Baton AdminClient::DeleteAcls(rd_kafka_AclBindingFilter_t **filters,
+                              size_t filter_cnt, int timeout_ms,
+                              /* out */ rd_kafka_event_t **event_response) {
+  if (!IsConnected()) {
+    return Baton(RdKafka::ERR__STATE);
+  }
+
+  {
+    scoped_shared_write_lock lock(m_connection_lock);
+    if (!IsConnected()) {
+      return Baton(RdKafka::ERR__STATE);
+    }
+
+    rd_kafka_AdminOptions_t *options = rd_kafka_AdminOptions_new(
+        m_client->c_ptr(), RD_KAFKA_ADMIN_OP_DELETEACLS);
+
+    char errstr[512];
+    rd_kafka_resp_err_t err = rd_kafka_AdminOptions_set_request_timeout(
+        options, timeout_ms, errstr, sizeof(errstr));
+    if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+      rd_kafka_AdminOptions_destroy(options);
+      return Baton(static_cast<RdKafka::ErrorCode>(err), errstr);
+    }
+
+    rd_kafka_queue_t *rkqu = rd_kafka_queue_new(m_client->c_ptr());
+
+    rd_kafka_DeleteAcls(m_client->c_ptr(), filters, filter_cnt, options,
+                        rkqu);
+
+    *event_response =
+        PollForEvent(rkqu, RD_KAFKA_EVENT_DELETEACLS_RESULT, timeout_ms);
+
+    rd_kafka_queue_destroy(rkqu);
+    rd_kafka_AdminOptions_destroy(options);
+
+    return BatonFromAdminEvent(*event_response,
+                               RD_KAFKA_EVENT_DELETEACLS_RESULT);
+  }
+}
+
 void AdminClient::ActivateDispatchers() {
   // Listen to global config
   m_gconfig->listen();
@@ -1593,6 +1751,173 @@ NAN_METHOD(AdminClient::NodeListOffsets) {
   // Queue the worker to process the offset fetch request asynchronously
   Nan::AsyncQueueWorker(new Workers::AdminClientListOffsets(
       callback, client, partitions, timeout_ms, isolation_level));
+}
+
+namespace {
+
+/**
+ * Converts a JS array of ACL bindings (or filters) into a malloc'd array.
+ * On success, ownership passes to the caller (the worker), which frees it
+ * with rd_kafka_AclBinding_destroy_array() + free(). On failure, anything
+ * already created is cleaned up, errstr is set, and NULL is returned.
+ */
+rd_kafka_AclBinding_t **AclArrayFromV8(v8::Local<v8::Array> array,
+                                       bool is_filter, std::string &errstr) {
+  const uint32_t cnt = array->Length();
+  rd_kafka_AclBinding_t **acls = static_cast<rd_kafka_AclBinding_t **>(
+      malloc(sizeof(rd_kafka_AclBinding_t *) * cnt));
+
+  for (uint32_t i = 0; i < cnt; i++) {
+    v8::Local<v8::Value> v;
+    rd_kafka_AclBinding_t *acl = NULL;
+
+    if (!Nan::Get(array, i).ToLocal(&v) || !v->IsObject()) {
+      errstr = "Each ACL entry must be an object";
+    } else if (is_filter) {
+      acl = Conversion::Admin::FromV8AclBindingFilter(v.As<v8::Object>(),
+                                                      errstr);
+    } else {
+      acl = Conversion::Admin::FromV8AclBinding(v.As<v8::Object>(), errstr);
+    }
+
+    if (acl == NULL) {
+      rd_kafka_AclBinding_destroy_array(acls, i);
+      free(acls);
+      return NULL;
+    }
+    acls[i] = acl;
+  }
+
+  return acls;
+}
+
+}  // namespace
+
+/**
+ * Create ACLs.
+ *
+ * createAcls(acls: AclBinding[], options: { timeout?: number }, cb)
+ */
+NAN_METHOD(AdminClient::NodeCreateAcls) {
+  Nan::HandleScope scope;
+
+  if (info.Length() < 3 || !info[2]->IsFunction()) {
+    return Nan::ThrowError("Need to specify a callback");
+  }
+
+  if (!info[0]->IsArray()) {
+    return Nan::ThrowError("Must provide an array of ACL bindings");
+  }
+
+  if (!info[1]->IsObject()) {
+    return Nan::ThrowError("Must provide options object");
+  }
+
+  v8::Local<v8::Array> acl_array = info[0].As<v8::Array>();
+  if (acl_array->Length() == 0) {
+    return Nan::ThrowError("Must provide at least one ACL binding");
+  }
+
+  std::string errstr;
+  rd_kafka_AclBinding_t **acls = AclArrayFromV8(acl_array, false, errstr);
+  if (acls == NULL) {
+    return Nan::ThrowError(errstr.c_str());
+  }
+
+  v8::Local<v8::Object> options = info[1].As<v8::Object>();
+  int timeout_ms = GetParameter<int64_t>(options, "timeout", 5000);
+
+  v8::Local<v8::Function> cb = info[2].As<v8::Function>();
+  Nan::Callback *callback = new Nan::Callback(cb);
+  AdminClient *client = ObjectWrap::Unwrap<AdminClient>(info.This());
+
+  // The worker takes ownership of `acls`.
+  Nan::AsyncQueueWorker(new Workers::AdminClientCreateAcls(
+      callback, client, acls, acl_array->Length(), timeout_ms));
+}
+
+/**
+ * Describe ACLs.
+ *
+ * describeAcls(filter: AclBindingFilter, options: { timeout?: number }, cb)
+ */
+NAN_METHOD(AdminClient::NodeDescribeAcls) {
+  Nan::HandleScope scope;
+
+  if (info.Length() < 3 || !info[2]->IsFunction()) {
+    return Nan::ThrowError("Need to specify a callback");
+  }
+
+  if (!info[0]->IsObject() || info[0]->IsArray()) {
+    return Nan::ThrowError("Must provide an ACL binding filter object");
+  }
+
+  if (!info[1]->IsObject()) {
+    return Nan::ThrowError("Must provide options object");
+  }
+
+  std::string errstr;
+  rd_kafka_AclBindingFilter_t *filter =
+      Conversion::Admin::FromV8AclBindingFilter(info[0].As<v8::Object>(),
+                                                errstr);
+  if (filter == NULL) {
+    return Nan::ThrowError(errstr.c_str());
+  }
+
+  v8::Local<v8::Object> options = info[1].As<v8::Object>();
+  int timeout_ms = GetParameter<int64_t>(options, "timeout", 5000);
+
+  v8::Local<v8::Function> cb = info[2].As<v8::Function>();
+  Nan::Callback *callback = new Nan::Callback(cb);
+  AdminClient *client = ObjectWrap::Unwrap<AdminClient>(info.This());
+
+  // The worker takes ownership of `filter`.
+  Nan::AsyncQueueWorker(new Workers::AdminClientDescribeAcls(
+      callback, client, filter, timeout_ms));
+}
+
+/**
+ * Delete ACLs.
+ *
+ * deleteAcls(filters: AclBindingFilter[], options: { timeout?: number }, cb)
+ */
+NAN_METHOD(AdminClient::NodeDeleteAcls) {
+  Nan::HandleScope scope;
+
+  if (info.Length() < 3 || !info[2]->IsFunction()) {
+    return Nan::ThrowError("Need to specify a callback");
+  }
+
+  if (!info[0]->IsArray()) {
+    return Nan::ThrowError("Must provide an array of ACL binding filters");
+  }
+
+  if (!info[1]->IsObject()) {
+    return Nan::ThrowError("Must provide options object");
+  }
+
+  v8::Local<v8::Array> filter_array = info[0].As<v8::Array>();
+  if (filter_array->Length() == 0) {
+    return Nan::ThrowError("Must provide at least one ACL binding filter");
+  }
+
+  std::string errstr;
+  rd_kafka_AclBindingFilter_t **filters =
+      AclArrayFromV8(filter_array, true, errstr);
+  if (filters == NULL) {
+    return Nan::ThrowError(errstr.c_str());
+  }
+
+  v8::Local<v8::Object> options = info[1].As<v8::Object>();
+  int timeout_ms = GetParameter<int64_t>(options, "timeout", 5000);
+
+  v8::Local<v8::Function> cb = info[2].As<v8::Function>();
+  Nan::Callback *callback = new Nan::Callback(cb);
+  AdminClient *client = ObjectWrap::Unwrap<AdminClient>(info.This());
+
+  // The worker takes ownership of `filters`.
+  Nan::AsyncQueueWorker(new Workers::AdminClientDeleteAcls(
+      callback, client, filters, filter_array->Length(), timeout_ms));
 }
 
 }  // namespace NodeKafka

@@ -76,6 +76,12 @@ class AdminClient : public Connection {
   Baton ListOffsets(rd_kafka_topic_partition_list_t* partitions, int timeout_ms,
                     rd_kafka_IsolationLevel_t isolation_level,
                     rd_kafka_event_t** event_response);
+  Baton CreateAcls(rd_kafka_AclBinding_t** acls, size_t acl_cnt,
+                   int timeout_ms, rd_kafka_event_t** event_response);
+  Baton DescribeAcls(rd_kafka_AclBindingFilter_t* filter, int timeout_ms,
+                     rd_kafka_event_t** event_response);
+  Baton DeleteAcls(rd_kafka_AclBindingFilter_t** filters, size_t filter_cnt,
+                   int timeout_ms, rd_kafka_event_t** event_response);
 
  protected:
   static Nan::Persistent<v8::Function> constructor;
@@ -102,6 +108,10 @@ class AdminClient : public Connection {
   static NAN_METHOD(NodeDeleteRecords);
   static NAN_METHOD(NodeDescribeTopics);
   static NAN_METHOD(NodeListOffsets);
+  // ACL operations
+  static NAN_METHOD(NodeCreateAcls);
+  static NAN_METHOD(NodeDescribeAcls);
+  static NAN_METHOD(NodeDeleteAcls);
 
   static NAN_METHOD(NodeConnect);
   static NAN_METHOD(NodeDisconnect);
